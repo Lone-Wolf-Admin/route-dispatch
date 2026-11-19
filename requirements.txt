@@ -4,4 +4,3 @@ openpyxl
 requests
 folium
 streamlit-folium
-supabase
