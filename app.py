@@ -60,7 +60,7 @@ def _try_photon(query: str):
     resp = requests.get(
         url,
         params={"q": query, "limit": 1, "lat": 39.65, "lon": -104.98},
-        headers={"User-Agent": "DenverRouteWebDispatch/2.0"},
+        headers={"User-Agent": "DenverRouteWebDispatch/2.1"},
         timeout=8,
     )
     feats = resp.json().get("features", [])
@@ -158,30 +158,44 @@ def optimize_loop(depot_coord, stops):
     return route, route_time(route), total_miles
 
 
-def build_routexl_url(depot_address: str, stops: list[dict]) -> str:
+def _clean_routexl_label(label: str) -> str:
+    """Strips apostrophes, colons, and symbols that truncate RouteXL's URL parser."""
+    clean = re.sub(r"[^A-Za-z0-9\s\-]", "", str(label))
+    return " ".join(clean.split())[:24].strip()
+
+
+def build_routexl_url(depot_address: str, depot_coord: tuple, stops: list[dict]) -> str:
     if not stops:
         return ""
 
-    def fmt(addr, label=None, dur=None):
-        clean_a = str(addr).replace("$", "").replace("@", "").strip()
-        parts = [clean_a]
+    def fmt(addr, coord, label=None, dur=None):
+        if coord and len(coord) == 2 and tuple(coord) != FALLBACK_COORD:
+            loc = f"{coord[0]:.5f},{coord[1]:.5f}"
+        else:
+            loc = re.sub(r"[^A-Za-z0-9\s,\-]", "", str(addr)).strip()
+        parts = [loc]
         if label:
-            clean_l = str(label).replace("$", "").replace("@", "").strip()
-            parts.append(f"@{clean_l}@")
+            clean_l = _clean_routexl_label(label)
+            if clean_l:
+                parts.append(f"@{clean_l}@")
         if dur is not None:
             parts.append(f"({int(round(dur))})")
         return " ".join(parts)
 
-    entries = [fmt(depot_address, "Depot Start")]
-    for s in stops:
-        entries.append(fmt(s["address"], s["store"], s["duration"]))
-    entries.append(fmt(depot_address, "Depot End"))
-    encoded = [urllib.parse.quote(e, safe="") for e in entries]
+    entries = [fmt(depot_address, depot_coord, "Depot Start")]
+    for idx, s in enumerate(stops, start=1):
+        entries.append(
+            fmt(s["address"], s.get("coord"), f"{idx} {s['store']}", s["duration"])
+        )
+    entries.append(fmt(depot_address, depot_coord, "Depot End"))
+    encoded = [urllib.parse.quote(e, safe=",@()") for e in entries]
     return "https://www.routexl.com/?q=" + "$".join(encoded)
 
 
-def build_sms_text(day: str, depot_address: str, stops: list[dict], stats: dict) -> str:
-    routexl_url = build_routexl_url(depot_address, stops)
+def build_sms_text(
+    day: str, depot_address: str, depot_coord: tuple, stops: list[dict], stats: dict
+) -> str:
+    routexl_url = build_routexl_url(depot_address, depot_coord, stops)
     lines = [
         f"{day.upper()} ROUTE ({len(stops)} stops | ~{stats.get('miles', 0):.1f} mi)",
         f"Start/End: {depot_address}",
@@ -299,7 +313,7 @@ def process_excel_and_balance(uploaded_file, single_min: float, dual_min: float)
 
 
 # ==========================================
-# 3. MAIN WEB APP UI (ZERO SETUP / NO SECRETS)
+# 3. MAIN WEB APP UI
 # ==========================================
 def main():
     st.title("🚚 7-Day Route Optimizer & Balancer")
@@ -376,8 +390,8 @@ def main():
         st.info(f"No stops scheduled for {selected_day}.")
         return
 
-    routexl_url = build_routexl_url(depot_addr, stops)
-    sms_text = build_sms_text(selected_day, depot_addr, stops, stats)
+    routexl_url = build_routexl_url(depot_addr, depot_coord, stops)
+    sms_text = build_sms_text(selected_day, depot_addr, depot_coord, stops, stats)
     sms_href = f"sms:?&body={urllib.parse.quote(sms_text)}"
 
     b1, b2 = st.columns(2)
