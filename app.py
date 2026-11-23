@@ -3,7 +3,6 @@ import math
 import smtplib
 from datetime import datetime
 from email.message import EmailMessage
-from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
@@ -437,27 +436,22 @@ def build_routexl_table(ordered_stops: list[dict]) -> tuple[pd.DataFrame, float]
     return pd.DataFrame(rows), round(cum_miles, 1)
 
 
-def render_google_maps_buttons(ordered_stops: list[dict], key_prefix: str):
-    """Renders 1-tap Google Maps navigation button(s) from HQ back to HQ."""
-    hq_addr = quote(HOME_BASE["address"])
-    if len(ordered_stops) <= 9:
-        wp = "|".join(quote(s["address"]) for s in ordered_stops)
-        url = f"https://www.google.com/maps/dir/?api=1&origin={hq_addr}&destination={hq_addr}&waypoints={wp}&travelmode=driving"
-        st.link_button("🚀 Open Round-Trip Route in Google Maps (HQ → HQ)", url, type="primary", use_container_width=True)
-    else:
-        leg1_dest = quote(ordered_stops[8]["address"])
-        leg1_wp = "|".join(quote(s["address"]) for s in ordered_stops[:8])
-        leg1_url = f"https://www.google.com/maps/dir/?api=1&origin={hq_addr}&destination={leg1_dest}&waypoints={leg1_wp}&travelmode=driving"
+def render_routexl_export_controls(ordered_stops: list[dict], key_prefix: str):
+    """Provides a one-tap copyable address list (HQ -> Stops -> HQ) and a direct Launch RouteXL.com button."""
+    full_addresses = [HOME_BASE["address"]] + [s["address"] for s in ordered_stops] + [HOME_BASE["address"]]
+    address_block = "\n".join(full_addresses)
 
-        leg2_origin = leg1_dest
-        leg2_wp = "|".join(quote(s["address"]) for s in ordered_stops[9:])
-        leg2_url = f"https://www.google.com/maps/dir/?api=1&origin={leg2_origin}&destination={hq_addr}&travelmode=driving"
-        if leg2_wp:
-            leg2_url += f"&waypoints={leg2_wp}"
+    st.markdown("**📋 Copy Selected Address List (HQ → Stops → HQ for RouteXL):**")
+    st.caption("Tap the copy icon in the top-right corner of the address box below, then tap **Launch RouteXL.com** and paste.")
+    st.code(address_block, language="text")
 
-        c1, c2 = st.columns(2)
-        c1.link_button("🚀 Leg 1 (HQ → Stop #9)", leg1_url, type="primary", use_container_width=True)
-        c2.link_button(f"🚀 Leg 2 (Stop #10 → HQ)", leg2_url, type="primary", use_container_width=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("📋 Copy Selected Address List", key=f"copy_btn_{key_prefix}", use_container_width=True):
+            st.toast("Address list ready! Tap the copy icon on the address box above, then paste into RouteXL.")
+            st.info(f"Copied list ready ({len(ordered_stops)} stops + HQ start/end) — tap the copy icon on the top-right of the box above.")
+    with c2:
+        st.link_button("🚀 Launch RouteXL.com", "https://www.routexl.com", type="primary", use_container_width=True)
 
 
 # ==============================================================================
@@ -483,7 +477,7 @@ def render_home_page():
     # Card 2: Route Optimizer
     with st.container(border=True):
         st.subheader("🗺️ Denver Route Optimizer")
-        st.write("View the master weekly schedule, 7-day optimized loops, and build custom nightly HQ-to-HQ routes.")
+        st.write("View the master weekly schedule, 7-day optimized loops, and copy address lists into RouteXL.com.")
         if st.button("Open Route Optimizer →", type="primary", use_container_width=True):
             navigate_to("route_optimizer")
 
@@ -736,7 +730,7 @@ def render_visit_log_page():
 
 
 # ==============================================================================
-# PAGE 3: DENVER ROUTE OPTIMIZER (MASTER SHEET + 7-DAY AUTO + CHECKBOX ROUTER)
+# PAGE 3: DENVER ROUTE OPTIMIZER (MASTER SHEET + 7-DAY AUTO + CHECKBOX ROUTEXL)
 # ==============================================================================
 def render_route_optimizer_page():
     if st.button("← Back to Home"):
@@ -764,9 +758,9 @@ def render_route_optimizer_page():
 
     st.divider()
 
-    # --- SECTION 2: AUTOMATIC 7-DAY OPTIMIZED ROUTES ---
-    st.subheader("2. Automatic 7-Day Optimized Routes (HQ → HQ)")
-    st.caption("Automatically sequenced round-trip routes for fixed weekly stops based on your spreadsheet.")
+    # --- SECTION 2: AUTOMATIC 7-DAY OPTIMIZED STOP SEQUENCES ---
+    st.subheader("2. Optimized Stop Sequence (7-Day Auto Schedule)")
+    st.caption("Select a day tab below to view the HQ → HQ sequence, copy the address list, and launch RouteXL.com.")
 
     today_name = DAYS_OF_WEEK[datetime.now().weekday()]
     day_tabs = st.tabs([f"{'📍 ' if d == today_name else ''}{d[:3]}" for d in DAYS_OF_WEEK])
@@ -778,13 +772,13 @@ def render_route_optimizer_page():
             day_df, day_miles = build_routexl_table(opt_day)
             st.markdown(f"**{day_name} Fixed Route:** {len(opt_day)} stops  |  Est. Round-Trip: **{day_miles} mi**")
             st.dataframe(day_df, use_container_width=True, hide_index=True)
-            render_google_maps_buttons(opt_day, key_prefix=f"auto_{day_name}")
+            render_routexl_export_controls(opt_day, key_prefix=f"auto_{day_name}")
 
     st.divider()
 
     # --- SECTION 3: CUSTOM NIGHTLY CHECKBOX ROUTE BUILDER (ROUTEXL STYLE) ---
-    st.subheader("3. Build Tonight's Route (Checkbox & Route)")
-    st.caption("Check every stop you want to run tonight (scheduled + flexible), then tap **🚀 Route** to optimize from HQ back to HQ.")
+    st.subheader("3. Build Tonight's Custom Route (Checkbox & Route)")
+    st.caption("Check every stop you want to run tonight (scheduled + flexible), then tap **🚀 Route** to generate your RouteXL address list.")
 
     q_col1, q_col2 = st.columns(2)
     with q_col1:
@@ -799,7 +793,6 @@ def render_route_optimizer_page():
             st.session_state.custom_route_result = []
             st.rerun()
 
-    # Group checkboxes cleanly in two columns for fast mobile tapping
     chosen_for_tonight = []
     left_stops = ROUTE_STOPS[:13]
     right_stops = ROUTE_STOPS[13:]
@@ -828,7 +821,7 @@ def render_route_optimizer_page():
         with st.container(border=True):
             st.success(f"Optimized Round-Trip Route Ready: **{len(opt_custom)} stops**  |  Est. Loop Distance: **{total_mi} miles** (HQ → HQ)")
             st.dataframe(custom_df, use_container_width=True, hide_index=True)
-            render_google_maps_buttons(opt_custom, key_prefix="custom_night")
+            render_routexl_export_controls(opt_custom, key_prefix="custom_night")
 
 
 # ==============================================================================
