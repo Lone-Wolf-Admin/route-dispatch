@@ -1,5 +1,5 @@
 import calendar
-import re
+import math
 import smtplib
 from datetime import datetime
 from email.message import EmailMessage
@@ -19,7 +19,7 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 680px; }
+    .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 720px; }
 
     /* Force 7-column calendar rows to stay side-by-side on mobile phones instead of stacking */
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stColumn"]:nth-child(7)) {
@@ -64,7 +64,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Master rate card (40 items grouped by Account -> Location -> Service, with street fragments for DMG Pro matching)
+# Master rate card (40 items grouped by Account -> Location -> Service)
 RATE_CARD = [
     {"id": "bb_mex_swp", "account": "Best Buy", "location": "Mexico", "service": "Sweeping", "rate": 30.00, "addr_keys": ["4100 e mexico"]},
     {"id": "bb_mex_qc", "account": "Best Buy", "location": "Mexico", "service": "QC", "rate": 7.00, "addr_keys": ["4100 e mexico"]},
@@ -108,41 +108,44 @@ RATE_CARD = [
     {"id": "wg_kip_swp", "account": "Walgreens", "location": "Kipling", "service": "Sweeping", "rate": 25.00, "addr_keys": ["5870 s kipling"]},
 ]
 
-# Denver Route Stops from Addresses for routing.xlsx (with approximate lat/lon for nearest-neighbor route sorting)
+# Denver Route Stops matching Addresses for routing.xlsx
 HOME_BASE = {
-    "name": "Home Base (Lakewood)",
+    "store": "HQ (Lakewood Start / End)",
     "address": "2345 Allison St, Lakewood, CO 80214",
+    "line": "HQ",
     "lat": 39.7517,
     "lon": -105.0861,
 }
 
 ROUTE_STOPS = [
-    {"id": "r_hr_saf", "store": "Highlands Ranch Safeway", "address": "9255 S Broadway, Highlands Ranch, CO 80129", "line": "Dual", "flex": "NO", "days": ["Mon", "Wed", "Fri"], "lat": 39.5481, "lon": -104.9877},
-    {"id": "r_ks_ham", "store": "King Soopers - Hampden", "address": "6470 E Hampden Ave, Denver, CO 80222", "line": "Dual", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "lat": 39.6534, "lon": -104.9126},
-    {"id": "r_ks_eva", "store": "King Soopers - Evans", "address": "2727 W Evans Ave, Denver, CO 80219", "line": "Sweep", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "lat": 39.6787, "lon": -105.0216},
-    {"id": "r_ks_sho", "store": "King Soopers - S Holly", "address": "6000 S Holly St, Greenwood Village, CO 80111", "line": "Dual", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "lat": 39.6075, "lon": -104.9225},
-    {"id": "r_ks_fed", "store": "King Soopers - Federal", "address": "5050 S Federal Blvd, Englewood, CO 80110", "line": "Sweep", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "lat": 39.6248, "lon": -105.0253},
-    {"id": "r_ks_lee", "store": "King Soopers - Leetsdale", "address": "4600 Leetsdale Dr, Glendale, CO 80246", "line": "Sweep", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], "lat": 39.7011, "lon": -104.9336},
-    {"id": "r_ks_ark", "store": "King Soopers - Arkansas (2x/wk)", "address": "4201 E Arkansas Ave, Denver, CO 80222", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.6908, "lon": -104.9383},
-    {"id": "r_ks_qui", "store": "King Soopers - Quincy (1x/wk)", "address": "19001 E Quincy Ave, Aurora, CO 80015", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.6384, "lon": -104.7663},
-    {"id": "r_ks_lit", "store": "King Soopers - Littleton", "address": "100 W Littleton Blvd, Littleton, CO 80120", "line": "Dual", "flex": "NO", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "lat": 39.6135, "lon": -105.0177},
-    {"id": "r_bb_mex", "store": "Best Buy - Mexico", "address": "4100 E Mexico Ave Ste A, Denver, CO 80222", "line": "Sweep", "flex": "NO", "days": ["Tue", "Thu"], "lat": 39.6836, "lon": -104.9398},
-    {"id": "r_bb_wad", "store": "Best Buy - Wadsworth", "address": "5395 S Wadsworth Blvd, Littleton, CO 80123", "line": "Sweep", "flex": "NO", "days": ["Tue", "Thu"], "lat": 39.6186, "lon": -105.0815},
-    {"id": "r_ko_que", "store": "Kohl's 2 - Quebec (2x/wk)", "address": "8660 S Quebec St, Lone Tree, CO 80124", "line": "Dual", "flex": "Yes", "days": [], "lat": 39.5594, "lon": -104.9036},
-    {"id": "r_ko_kip", "store": "Kohl's 3 - Kipling (2x/wk)", "address": "8444 S Kipling Pkwy, Littleton, CO 80127", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.5638, "lon": -105.1101},
-    {"id": "r_ko_cas", "store": "Kohl's 4 - Castle Rock (2x/wk)", "address": "4800 Milestone Ln, Castle Rock, CO 80104", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.4106, "lon": -104.8814},
-    {"id": "r_ko_20m", "store": "Kohl's 5 - 20 Mile (2x/wk)", "address": "11485 S Twenty Mile Rd, Parker, CO 80134", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.5082, "lon": -104.7654},
-    {"id": "r_sc_wad", "store": "Sam's Club - Wadsworth (2x/wk)", "address": "4827 S Wadsworth Way, Littleton, CO 80123", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.6285, "lon": -105.0814},
-    {"id": "r_wg_ara", "store": "Walgreens - Arapahoe (1x/wk)", "address": "16440 E Arapahoe Rd, Foxfield, CO 80016", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.5955, "lon": -104.7963},
-    {"id": "r_wg_kip", "store": "Walgreens - Kipling (1x/wk)", "address": "5870 S Kipling Pkwy, Littleton, CO 80127", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.6104, "lon": -105.1099},
-    {"id": "r_wg_hgr", "store": "Walgreens - Highlands Ranch (2x/wk)", "address": "9390 S Colorado Blvd, Highlands Ranch, CO 80126", "line": "Dual", "flex": "Yes", "days": [], "lat": 39.5461, "lon": -104.9432},
-    {"id": "r_wg_bel", "store": "Walgreens - Belleview (1x/wk)", "address": "2697 W Belleview Ave, Littleton, CO 80123", "line": "Sweep", "flex": "Yes", "days": [], "lat": 39.6238, "lon": -105.0209},
-    {"id": "r_lo_pea", "store": "Lowe's - Peakview (Mon + 1 Flex)", "address": "9100 E Peakview Ave, Greenwood Village, CO 80111", "line": "Sweep", "flex": "Mon + Wed-Fri", "days": ["Mon"], "lat": 39.5979, "lon": -104.8825},
-    {"id": "r_lo_san", "store": "Lowe's - Santa Fe (Mon + 1 Flex)", "address": "5095 S Santa Fe Dr, Littleton, CO 80120", "line": "Sweep", "flex": "Mon + Wed-Fri", "days": ["Mon"], "lat": 39.6244, "lon": -105.0232},
-    {"id": "r_lo_buc", "store": "Lowe's - Buckley (Mon + 1 Flex)", "address": "4455 S Buckley Rd, Aurora, CO 80015", "line": "Sweep", "flex": "Mon + Wed-Fri", "days": ["Mon"], "lat": 39.6355, "lon": -104.7915},
-    {"id": "r_lo_20m", "store": "Lowe's - 20 Mile (Mon + 1 Flex)", "address": "10000 S Twenty Mile Rd, Parker, CO 80134", "line": "Sweep", "flex": "Mon + Wed-Fri", "days": ["Mon"], "lat": 39.5342, "lon": -104.7652},
-    {"id": "r_lo_whe", "store": "Lowe's - Wheatlands (Mon + 1 Flex)", "address": "24505 E Wheatlands Pkwy, Aurora, CO 80016", "line": "Sweep", "flex": "Mon + Wed-Fri", "days": ["Mon"], "lat": 39.5919, "lon": -104.7024},
+    {"id": "r_hr_saf", "store": "Highlands Ranch Safeway", "address": "9255 S Broadway, Highlands Ranch, CO 80129", "line": "Dual", "flex": "NO", "visits_wk": 3, "days": ["Monday", "Wednesday", "Friday"], "lat": 39.5481, "lon": -104.9877},
+    {"id": "r_ks_ham", "store": "KingSoopers - Hampden", "address": "6470 E Hampden Ave, Denver, CO 80222", "line": "Dual", "flex": "NO", "visits_wk": 5, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "lat": 39.6534, "lon": -104.9126},
+    {"id": "r_ks_eva", "store": "KingSoopers - Evans", "address": "2727 W Evans Ave, Denver, CO 80219", "line": "Sweep", "flex": "NO", "visits_wk": 5, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "lat": 39.6787, "lon": -105.0216},
+    {"id": "r_ks_sho", "store": "KingSoopers - S Holly", "address": "6000 S Holly St, Greenwood Village, CO 80111", "line": "Dual", "flex": "NO", "visits_wk": 5, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "lat": 39.6075, "lon": -104.9225},
+    {"id": "r_ks_fed", "store": "KingSoopers - Federal", "address": "5050 S Federal Blvd, Englewood, CO 80110", "line": "Sweep", "flex": "NO", "visits_wk": 5, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "lat": 39.6248, "lon": -105.0253},
+    {"id": "r_ks_lee", "store": "KingSoopers - Leetsdale", "address": "4600 Leetsdale Dr, Glendale, CO 80246", "line": "Sweep", "flex": "NO", "visits_wk": 7, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], "lat": 39.7011, "lon": -104.9336},
+    {"id": "r_ks_ark", "store": "KingSoopers - Arkansas", "address": "4201 E Arkansas Ave, Denver, CO 80222", "line": "Sweep", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.6908, "lon": -104.9383},
+    {"id": "r_ks_qui", "store": "KingSoopers - Quincy", "address": "19001 E Quincy Ave, Aurora, CO 80015", "line": "Sweep", "flex": "Yes", "visits_wk": 1, "days": [], "lat": 39.6384, "lon": -104.7663},
+    {"id": "r_ks_lit", "store": "KingSoopers - Littleton", "address": "100 W Littleton Blvd, Littleton, CO 80120", "line": "Dual", "flex": "NO", "visits_wk": 5, "days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], "lat": 39.6135, "lon": -105.0177},
+    {"id": "r_bb_mex", "store": "BestBuy - Mexico", "address": "4100 E Mexico Ave Ste A, Denver, CO 80222", "line": "Sweep", "flex": "NO", "visits_wk": 2, "days": ["Tuesday", "Thursday"], "lat": 39.6836, "lon": -104.9398},
+    {"id": "r_bb_wad", "store": "BestBuy - Wadsworth", "address": "5395 S Wadsworth Blvd, Littleton, CO 80123", "line": "Sweep", "flex": "NO", "visits_wk": 2, "days": ["Tuesday", "Thursday"], "lat": 39.6186, "lon": -105.0815},
+    {"id": "r_ko_que", "store": "Kohls 2 (Quebec)", "address": "8660 S Quebec St, Lone Tree, CO 80124", "line": "Dual", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.5594, "lon": -104.9036},
+    {"id": "r_ko_kip", "store": "Kohls 3 (Kipling)", "address": "8444 S Kipling Pkwy, Littleton, CO 80127", "line": "Sweep", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.5638, "lon": -105.1101},
+    {"id": "r_ko_cas", "store": "Kohls 4 (Castle Rock)", "address": "4800 Milestone Ln, Castle Rock, CO 80104", "line": "Sweep", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.4106, "lon": -104.8814},
+    {"id": "r_ko_20m", "store": "Kohls 5 (20 Mile)", "address": "11485 S Twenty Mile Rd, Parker, CO 80134", "line": "Sweep", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.5082, "lon": -104.7654},
+    {"id": "r_sc_wad", "store": "SamsClub Realty Inc", "address": "4827 S Wadsworth Way, Littleton, CO 80123", "line": "Sweep", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.6285, "lon": -105.0814},
+    {"id": "r_wg_ara", "store": "Walgreens Denver (Arapahoe)", "address": "16440 E Arapahoe Rd, Foxfield, CO 80016", "line": "Sweep", "flex": "Yes", "visits_wk": 1, "days": [], "lat": 39.5955, "lon": -104.7963},
+    {"id": "r_wg_kip", "store": "Walgreens Denver (Kipling)", "address": "5870 S Kipling Pkwy, Littleton, CO 80127", "line": "Sweep", "flex": "Yes", "visits_wk": 1, "days": [], "lat": 39.6104, "lon": -105.1099},
+    {"id": "r_wg_hgr", "store": "Walgreens Denver (Highlands Ranch)", "address": "9390 S Colorado Blvd, Highlands Ranch, CO 80126", "line": "Dual", "flex": "Yes", "visits_wk": 2, "days": [], "lat": 39.5461, "lon": -104.9432},
+    {"id": "r_wg_bel", "store": "Walgreens Denver (Belleview)", "address": "2697 W Belleview Ave, Littleton, CO 80123", "line": "Sweep", "flex": "Yes", "visits_wk": 1, "days": [], "lat": 39.6238, "lon": -105.0209},
+    {"id": "r_lo_pea", "store": "Lowe's: E Peakview Ave 311", "address": "9100 E Peakview Ave, Greenwood Village, CO 80111", "line": "Sweep", "flex": "Mon Mandatory & Wed-Fri Flex", "visits_wk": 2, "days": ["Monday"], "lat": 39.5979, "lon": -104.8825},
+    {"id": "r_lo_san", "store": "Lowe's: S Santa Fe Dr 2419", "address": "5095 S Santa Fe Dr, Littleton, CO 80120", "line": "Sweep", "flex": "Mon Mandatory & Wed-Fri Flex", "visits_wk": 2, "days": ["Monday"], "lat": 39.6244, "lon": -105.0232},
+    {"id": "r_lo_buc", "store": "Lowe's: S Buckley Rd 1730", "address": "4455 S Buckley Rd, Aurora, CO 80015", "line": "Sweep", "flex": "Mon Mandatory & Wed-Fri Flex", "visits_wk": 2, "days": ["Monday"], "lat": 39.6355, "lon": -104.7915},
+    {"id": "r_lo_20m", "store": "Lowe's: S Twenty Mile Rd 1755", "address": "10000 S Twenty Mile Rd, Parker, CO 80134", "line": "Sweep", "flex": "Mon Mandatory & Wed-Fri Flex", "visits_wk": 2, "days": ["Monday"], "lat": 39.5342, "lon": -104.7652},
+    {"id": "r_lo_whe", "store": "LOWES Via DMG (Wheatlands)", "address": "24505 E Wheatlands Pkwy, Aurora, CO 80016", "line": "Sweep", "flex": "Mon Mandatory & Wed-Fri Flex", "visits_wk": 2, "days": ["Monday"], "lat": 39.5919, "lon": -104.7024},
 ]
+
+DAYS_OF_WEEK = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 # --- SESSION STATE INITIALIZATION ---
 if "current_page" not in st.session_state:
@@ -165,6 +168,10 @@ if "extra_items" not in st.session_state:
     st.session_state.extra_items = []
 if "extra_temp_days" not in st.session_state:
     st.session_state.extra_temp_days = []
+
+# Route optimizer state
+if "custom_route_result" not in st.session_state:
+    st.session_state.custom_route_result = []
 
 
 def navigate_to(page_name: str):
@@ -357,37 +364,100 @@ def send_completion_email(
         server.send_message(msg)
 
 
-def order_stops_nearest_neighbor(stops: list[dict], round_trip: bool = True) -> list[dict]:
-    """Orders selected stops starting from Home Base (Lakewood) using nearest-neighbor routing."""
-    remaining = stops.copy()
-    ordered = []
-    curr_lat, curr_lon = HOME_BASE["lat"], HOME_BASE["lon"]
+# --- ROUTING / TSP HELPERS (ROUTEXL STYLE: HQ -> STOPS -> HQ) ---
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 3958.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
 
-    while remaining:
-        nearest = min(
-            remaining,
-            key=lambda s: (s["lat"] - curr_lat) ** 2 + (s["lon"] - curr_lon) ** 2,
+
+def optimize_round_trip_hq(stops: list[dict]) -> list[dict]:
+    """Optimizes a round-trip route starting at HQ and returning to HQ (nearest-neighbor + 2-opt loop refinement)."""
+    if not stops:
+        return []
+    unvisited = stops[:]
+    route = []
+    curr = HOME_BASE
+    while unvisited:
+        nxt = min(unvisited, key=lambda s: haversine_miles(curr["lat"], curr["lon"], s["lat"], s["lon"]))
+        route.append(nxt)
+        curr = nxt
+        unvisited.remove(nxt)
+
+    pts = [HOME_BASE] + route + [HOME_BASE]
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, len(pts) - 2):
+            for j in range(i + 1, len(pts) - 1):
+                d_before = haversine_miles(pts[i - 1]["lat"], pts[i - 1]["lon"], pts[i]["lat"], pts[i]["lon"]) + haversine_miles(
+                    pts[j]["lat"], pts[j]["lon"], pts[j + 1]["lat"], pts[j + 1]["lon"]
+                )
+                d_after = haversine_miles(pts[i - 1]["lat"], pts[i - 1]["lon"], pts[j]["lat"], pts[j]["lon"]) + haversine_miles(
+                    pts[i]["lat"], pts[i]["lon"], pts[j + 1]["lat"], pts[j + 1]["lon"]
+                )
+                if d_after + 1e-6 < d_before:
+                    pts[i : j + 1] = reversed(pts[i : j + 1])
+                    improved = True
+    return pts[1:-1]
+
+
+def build_routexl_table(ordered_stops: list[dict]) -> tuple[pd.DataFrame, float]:
+    """Builds a RouteXL-style itinerary table from HQ back to HQ with leg distances and cumulative miles."""
+    full_chain = [HOME_BASE] + ordered_stops + [HOME_BASE]
+    rows = []
+    cum_miles = 0.0
+    for idx, pt in enumerate(full_chain):
+        if idx == 0:
+            leg_miles = 0.0
+            stop_tag = "START (HQ)"
+        elif idx == len(full_chain) - 1:
+            prev = full_chain[idx - 1]
+            leg_miles = haversine_miles(prev["lat"], prev["lon"], pt["lat"], pt["lon"])
+            stop_tag = "END (HQ)"
+        else:
+            prev = full_chain[idx - 1]
+            leg_miles = haversine_miles(prev["lat"], prev["lon"], pt["lat"], pt["lon"])
+            stop_tag = f"#{idx}"
+
+        cum_miles += leg_miles
+        rows.append(
+            {
+                "Stop": stop_tag,
+                "Location": pt["store"],
+                "Service": pt.get("line", "-"),
+                "Address": pt["address"],
+                "Leg (mi)": round(leg_miles, 1),
+                "Total (mi)": round(cum_miles, 1),
+            }
         )
-        ordered.append(nearest)
-        curr_lat, curr_lon = nearest["lat"], nearest["lon"]
-        remaining.remove(nearest)
-
-    return ordered
+    return pd.DataFrame(rows), round(cum_miles, 1)
 
 
-def build_google_maps_url(ordered_stops: list[dict], round_trip: bool = True) -> str:
-    origin = quote(HOME_BASE["address"])
-    if round_trip:
-        destination = origin
-        waypoints = "|".join(quote(s["address"]) for s in ordered_stops)
+def render_google_maps_buttons(ordered_stops: list[dict], key_prefix: str):
+    """Renders 1-tap Google Maps navigation button(s) from HQ back to HQ."""
+    hq_addr = quote(HOME_BASE["address"])
+    if len(ordered_stops) <= 9:
+        wp = "|".join(quote(s["address"]) for s in ordered_stops)
+        url = f"https://www.google.com/maps/dir/?api=1&origin={hq_addr}&destination={hq_addr}&waypoints={wp}&travelmode=driving"
+        st.link_button("🚀 Open Round-Trip Route in Google Maps (HQ → HQ)", url, type="primary", use_container_width=True)
     else:
-        destination = quote(ordered_stops[-1]["address"])
-        waypoints = "|".join(quote(s["address"]) for s in ordered_stops[:-1])
+        leg1_dest = quote(ordered_stops[8]["address"])
+        leg1_wp = "|".join(quote(s["address"]) for s in ordered_stops[:8])
+        leg1_url = f"https://www.google.com/maps/dir/?api=1&origin={hq_addr}&destination={leg1_dest}&waypoints={leg1_wp}&travelmode=driving"
 
-    url = f"https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode=driving"
-    if waypoints:
-        url += f"&waypoints={waypoints}"
-    return url
+        leg2_origin = leg1_dest
+        leg2_wp = "|".join(quote(s["address"]) for s in ordered_stops[9:])
+        leg2_url = f"https://www.google.com/maps/dir/?api=1&origin={leg2_origin}&destination={hq_addr}&travelmode=driving"
+        if leg2_wp:
+            leg2_url += f"&waypoints={leg2_wp}"
+
+        c1, c2 = st.columns(2)
+        c1.link_button("🚀 Leg 1 (HQ → Stop #9)", leg1_url, type="primary", use_container_width=True)
+        c2.link_button(f"🚀 Leg 2 (Stop #10 → HQ)", leg2_url, type="primary", use_container_width=True)
 
 
 # ==============================================================================
@@ -413,7 +483,7 @@ def render_home_page():
     # Card 2: Route Optimizer
     with st.container(border=True):
         st.subheader("🗺️ Denver Route Optimizer")
-        st.write("Build your daily sweep & porter route from Lakewood HQ, add flexible stops, and launch Google Maps.")
+        st.write("View the master weekly schedule, 7-day optimized loops, and build custom nightly HQ-to-HQ routes.")
         if st.button("Open Route Optimizer →", type="primary", use_container_width=True):
             navigate_to("route_optimizer")
 
@@ -432,8 +502,7 @@ def render_visit_log_page():
     tot_amt = float(summary_df["Amount"].sum())
     has_unsaved = (tot_visits > 0) and (not st.session_state.log_submitted)
 
-    # Top Navigation Bar with Back Button
-    nav_col1, nav_col2 = st.columns([1.4, 2.6])
+    nav_col1, _ = st.columns([1.4, 2.6])
     with nav_col1:
         if st.button("← Back to Home", use_container_width=True):
             if has_unsaved:
@@ -442,7 +511,6 @@ def render_visit_log_page():
             else:
                 navigate_to("home")
 
-    # Unsaved Changes Warning Banner
     if st.session_state.confirm_leave_log and has_unsaved:
         with st.container(border=True):
             st.error(
@@ -493,7 +561,6 @@ def render_visit_log_page():
 
     st.divider()
 
-    # --- STEP 1: TAP DATES VISITED BY ACCOUNT ---
     st.subheader("1. Select Dates Visited")
     accounts = [
         "King Soopers",
@@ -559,7 +626,6 @@ def render_visit_log_page():
                 st.session_state.open_calendar = None
                 st.rerun()
 
-    # Optional One-Off / Bulk Trash section
     with st.expander(
         "➕ Add One-Off Job (e.g., Bulk Trash)",
         expanded=(st.session_state.open_account == "extra_job" or st.session_state.open_calendar == "extra_job"),
@@ -616,7 +682,6 @@ def render_visit_log_page():
 
     st.divider()
 
-    # --- STEP 2: REVIEW & SUBMIT ---
     st.subheader("2. Download PDF & Email Completed Log")
     active_preview = summary_df[summary_df["Visits"] > 0][["Line Item", "Visits", "Amount", "Dates Visited"]]
 
@@ -671,85 +736,99 @@ def render_visit_log_page():
 
 
 # ==============================================================================
-# PAGE 3: DENVER ROUTE OPTIMIZER
+# PAGE 3: DENVER ROUTE OPTIMIZER (MASTER SHEET + 7-DAY AUTO + CHECKBOX ROUTER)
 # ==============================================================================
 def render_route_optimizer_page():
     if st.button("← Back to Home"):
         navigate_to("home")
 
     st.title("🗺️ Denver Route Optimizer")
-    st.caption(f"Starts & ends at **{HOME_BASE['address']}**")
+    st.caption(f"Starting & Ending Address (HQ): **{HOME_BASE['address']}**")
 
-    day_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    today_short = day_names[datetime.now().weekday()]
+    # --- SECTION 1: MASTER SCHEDULE TABLE (MATCHING EXCEL SHEET) ---
+    st.subheader("1. Master Route Schedule (All Denver Stops)")
+    master_rows = []
+    for s in ROUTE_STOPS:
+        row = {
+            "Store": s["store"],
+            "Address": s["address"],
+            "Service Line": s["line"],
+            "Flexible Day": s["flex"],
+            "Visits/Wk": s["visits_wk"],
+        }
+        for d in DAYS_OF_WEEK:
+            row[d[:3]] = "X" if d in s["days"] else ""
+        master_rows.append(row)
 
-    col_d, col_rt = st.columns([2, 1.5])
-    with col_d:
-        selected_day = st.selectbox("Route Day", options=day_names, index=day_names.index(today_short))
-    with col_rt:
-        st.markdown("<div style='height:1.65rem;'></div>", unsafe_allow_html=True)
-        round_trip = st.checkbox("Return to Lakewood", value=True)
-
-    # Split stops into Mandatory for selected day vs. Flexible / Other stops
-    scheduled_stops = [s for s in ROUTE_STOPS if selected_day in s["days"]]
-    flex_stops = [s for s in ROUTE_STOPS if selected_day not in s["days"]]
-
-    st.subheader(f"1. Scheduled Stops for {selected_day} ({len(scheduled_stops)})")
-    selected_stop_ids = []
-    if scheduled_stops:
-        for s in scheduled_stops:
-            if st.checkbox(f"**{s['store']}** ({s['line']}) — {s['address']}", value=True, key=f"sch_{s['id']}"):
-                selected_stop_ids.append(s["id"])
-    else:
-        st.info(f"Only King Soopers Leetsdale is fixed on {selected_day}s. Add flexible stops below.")
-
-    with st.expander(f"➕ Add Flexible / Extra Stops ({len(flex_stops)} available)", expanded=(selected_day in ["Wed", "Thu", "Fri", "Sat"])):
-        for s in flex_stops:
-            if st.checkbox(f"**{s['store']}** ({s['line']}) — {s['address']}", value=False, key=f"flx_{s['id']}"):
-                selected_stop_ids.append(s["id"])
-
-    chosen_stops = [s for s in ROUTE_STOPS if s["id"] in selected_stop_ids]
+    st.dataframe(pd.DataFrame(master_rows), use_container_width=True, hide_index=True)
 
     st.divider()
-    st.subheader(f"2. Optimized Stop Sequence ({len(chosen_stops)} stops)")
 
-    if not chosen_stops:
-        st.warning("Select at least one stop above to build your route.")
-    else:
-        ordered = order_stops_nearest_neighbor(chosen_stops, round_trip=round_trip)
+    # --- SECTION 2: AUTOMATIC 7-DAY OPTIMIZED ROUTES ---
+    st.subheader("2. Automatic 7-Day Optimized Routes (HQ → HQ)")
+    st.caption("Automatically sequenced round-trip routes for fixed weekly stops based on your spreadsheet.")
 
-        route_rows = [{"Stop #": "Start", "Location": HOME_BASE["name"], "Service": "-", "Address": HOME_BASE["address"]}]
-        for idx, s in enumerate(ordered, start=1):
-            route_rows.append(
-                {
-                    "Stop #": f"#{idx}",
-                    "Location": s["store"],
-                    "Service": s["line"],
-                    "Address": s["address"],
-                }
-            )
-        if round_trip:
-            route_rows.append({"Stop #": "End", "Location": HOME_BASE["name"], "Service": "-", "Address": HOME_BASE["address"]})
+    today_name = DAYS_OF_WEEK[datetime.now().weekday()]
+    day_tabs = st.tabs([f"{'📍 ' if d == today_name else ''}{d[:3]}" for d in DAYS_OF_WEEK])
 
-        st.dataframe(pd.DataFrame(route_rows), use_container_width=True, hide_index=True)
+    for tab, day_name in zip(day_tabs, DAYS_OF_WEEK):
+        with tab:
+            fixed_for_day = [s for s in ROUTE_STOPS if day_name in s["days"]]
+            opt_day = optimize_round_trip_hq(fixed_for_day)
+            day_df, day_miles = build_routexl_table(opt_day)
+            st.markdown(f"**{day_name} Fixed Route:** {len(opt_day)} stops  |  Est. Round-Trip: **{day_miles} mi**")
+            st.dataframe(day_df, use_container_width=True, hide_index=True)
+            render_google_maps_buttons(opt_day, key_prefix=f"auto_{day_name}")
 
-        # Google Maps supports up to 9-10 waypoints per link; split cleanly if route has >9 stops
-        if len(ordered) <= 9:
-            gmaps_url = build_google_maps_url(ordered, round_trip=round_trip)
-            st.link_button("🚀 Open Full Route in Google Maps", gmaps_url, type="primary", use_container_width=True)
+    st.divider()
+
+    # --- SECTION 3: CUSTOM NIGHTLY CHECKBOX ROUTE BUILDER (ROUTEXL STYLE) ---
+    st.subheader("3. Build Tonight's Route (Checkbox & Route)")
+    st.caption("Check every stop you want to run tonight (scheduled + flexible), then tap **🚀 Route** to optimize from HQ back to HQ.")
+
+    q_col1, q_col2 = st.columns(2)
+    with q_col1:
+        if st.button(f"✅ Pre-Check {today_name}'s Fixed Stops", use_container_width=True):
+            for s in ROUTE_STOPS:
+                st.session_state[f"chk_night_{s['id']}"] = (today_name in s["days"])
+            st.rerun()
+    with q_col2:
+        if st.button("🧹 Clear All Checkboxes", use_container_width=True):
+            for s in ROUTE_STOPS:
+                st.session_state[f"chk_night_{s['id']}"] = False
+            st.session_state.custom_route_result = []
+            st.rerun()
+
+    # Group checkboxes cleanly in two columns for fast mobile tapping
+    chosen_for_tonight = []
+    left_stops = ROUTE_STOPS[:13]
+    right_stops = ROUTE_STOPS[13:]
+
+    c_left, c_right = st.columns(2)
+    with c_left:
+        for s in left_stops:
+            badge = f" [{s['visits_wk']}x/wk]" if s["flex"] != "NO" else f" [{', '.join(d[:3] for d in s['days'])}]"
+            if st.checkbox(f"**{s['store']}** ({s['line']}){badge}", key=f"chk_night_{s['id']}"):
+                chosen_for_tonight.append(s)
+    with c_right:
+        for s in right_stops:
+            badge = f" [{s['visits_wk']}x/wk]" if s["flex"] != "NO" else f" [{', '.join(d[:3] for d in s['days'])}]"
+            if st.checkbox(f"**{s['store']}** ({s['line']}){badge}", key=f"chk_night_{s['id']}"):
+                chosen_for_tonight.append(s)
+
+    if st.button(f"🚀 Route ({len(chosen_for_tonight)} stops selected)", type="primary", use_container_width=True):
+        if not chosen_for_tonight:
+            st.warning("Check at least one store above before tapping Route.")
         else:
-            st.info(f"Your route has {len(ordered)} stops. Google Maps allows up to 9 stops per link, so it is split into Leg 1 & Leg 2:")
-            leg1_url = build_google_maps_url(ordered[:9], round_trip=False)
-            leg2_origin = quote(ordered[8]["address"])
-            leg2_dest = quote(HOME_BASE["address"]) if round_trip else quote(ordered[-1]["address"])
-            leg2_wp_list = ordered[9:] if round_trip else ordered[9:-1]
-            leg2_url = f"https://www.google.com/maps/dir/?api=1&origin={leg2_origin}&destination={leg2_dest}&travelmode=driving"
-            if leg2_wp_list:
-                leg2_url += "&waypoints=" + "|".join(quote(s["address"]) for s in leg2_wp_list)
+            st.session_state.custom_route_result = optimize_round_trip_hq(chosen_for_tonight)
 
-            c_leg1, c_leg2 = st.columns(2)
-            c_leg1.link_button("🚀 Leg 1 (Stops 1–9)", leg1_url, type="primary", use_container_width=True)
-            c_leg2.link_button(f"🚀 Leg 2 (Stops 10–{len(ordered)})", leg2_url, type="primary", use_container_width=True)
+    if st.session_state.custom_route_result:
+        opt_custom = st.session_state.custom_route_result
+        custom_df, total_mi = build_routexl_table(opt_custom)
+        with st.container(border=True):
+            st.success(f"Optimized Round-Trip Route Ready: **{len(opt_custom)} stops**  |  Est. Loop Distance: **{total_mi} miles** (HQ → HQ)")
+            st.dataframe(custom_df, use_container_width=True, hide_index=True)
+            render_google_maps_buttons(opt_custom, key_prefix="custom_night")
 
 
 # ==============================================================================
